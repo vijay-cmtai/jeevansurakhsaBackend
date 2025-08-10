@@ -5,12 +5,14 @@ import Config from "../../models/configModel.js";
 import { createCashfreeOrderForMember } from "../paymentController.js";
 import MemberCertificate from "../../models/memberCertificateModel.js";
 
+// Helper function to generate a JWT token
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: "30d",
   });
 };
 
+// Helper function to get or create the main config document
 const getConfig = async () => {
   let config = await Config.findOne({ singleton: "main_config" });
   if (!config) {
@@ -19,21 +21,17 @@ const getConfig = async () => {
   return config;
 };
 
-const registerMember = asyncHandler(async (req, res) => {
+// --- CORE MEMBER FUNCTIONS ---
+
+export const registerMember = asyncHandler(async (req, res) => {
   let formData;
   let isPayingNow;
-
   try {
-    if (req.body.formData) {
-      formData = JSON.parse(req.body.formData);
-      isPayingNow = JSON.parse(req.body.isPayingNow);
-    } else {
-      formData = req.body;
-      isPayingNow = req.body.isPayingNow || false;
-    }
+    formData = JSON.parse(req.body.formData);
+    isPayingNow = JSON.parse(req.body.isPayingNow);
   } catch (e) {
     res.status(400);
-    throw new Error("Invalid form data format. Could not parse data.");
+    throw new Error("Invalid form data format.");
   }
 
   const { dateOfBirth, fullName, phone, email, nominees } = formData;
@@ -46,9 +44,7 @@ const registerMember = asyncHandler(async (req, res) => {
   const birthDate = new Date(dateOfBirth);
   let age = today.getFullYear() - birthDate.getFullYear();
   const m = today.getMonth() - birthDate.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
   if (age < 18 || age > 60) {
     res.status(400);
     throw new Error("Member must be between 18 and 60 years of age.");
@@ -59,12 +55,12 @@ const registerMember = asyncHandler(async (req, res) => {
   });
   if (memberExists) {
     res.status(400);
-    throw new Error("Member with this email or phone already exists");
+    throw new Error("A member with this email or phone number already exists.");
   }
 
   if (!nominees || nominees.length === 0) {
     res.status(400);
-    throw new Error("At least one nominee is required");
+    throw new Error("At least one nominee is required.");
   }
   const totalPercentage = nominees.reduce(
     (sum, nom) => sum + Number(nom.percentage || 0),
@@ -72,18 +68,15 @@ const registerMember = asyncHandler(async (req, res) => {
   );
   if (totalPercentage !== 100) {
     res.status(400);
-    throw new Error("Total nominee percentage must be exactly 100%");
+    throw new Error("The total nominee percentage must be exactly 100%.");
   }
 
   const memberData = { ...formData };
-
   if (req.files) {
-    if (req.files.profileImage && req.files.profileImage.length > 0) {
+    if (req.files.profileImage?.[0])
       memberData.profileImageUrl = req.files.profileImage[0].path;
-    }
-    if (req.files.panImage && req.files.panImage.length > 0) {
+    if (req.files.panImage?.[0])
       memberData.panImageUrl = req.files.panImage[0].path;
-    }
   }
 
   const member = await Member.create(memberData);
@@ -92,28 +85,27 @@ const registerMember = asyncHandler(async (req, res) => {
     if (isPayingNow) {
       try {
         const paymentDetails = await createCashfreeOrderForMember(member);
-        res.status(201).json({
-          _id: member._id,
-          message: "Member registered. Proceeding to payment.",
-          paymentDetails,
-        });
+        res
+          .status(201)
+          .json({
+            _id: member._id,
+            message: "Member registered. Proceeding to payment.",
+            paymentDetails,
+          });
       } catch (paymentError) {
-        console.error("PAYMENT_INITIATION_FAILED for new member:", {
-          memberId: member._id,
-          error: paymentError.message,
-        });
         res.status(500);
         throw new Error(
-          "Registration was successful, but we could not initiate the payment. Please log in and try to pay from your dashboard."
+          "Registration successful, but payment initiation failed. Please login and pay from your dashboard."
         );
       }
     } else {
-      res.status(201).json({
-        _id: member._id,
-        message:
-          "Registration successful! Please login and complete your payment to activate your account.",
-        paymentDetails: null,
-      });
+      res
+        .status(201)
+        .json({
+          _id: member._id,
+          message: "Registration successful! Please login to complete payment.",
+          paymentDetails: null,
+        });
     }
   } else {
     res.status(400);
@@ -121,56 +113,28 @@ const registerMember = asyncHandler(async (req, res) => {
   }
 });
 
-const activateMember = asyncHandler(async (req, res) => {
-  const member = await Member.findById(req.params.id);
-  if (member && member.paymentStatus === "Pending") {
-    member.registrationNo = `MBR-${String(member._id).slice(-6).toUpperCase()}`;
-    member.paymentStatus = "Paid";
-    member.membershipStatus = "Active";
-    const updatedMember = await member.save();
-    res.json({
-      _id: updatedMember._id,
-      fullName: updatedMember.fullName,
-      email: updatedMember.email,
-      token: generateToken(updatedMember._id),
-      message: "Payment successful and membership is now active!",
-    });
-  } else if (member) {
-    res.status(400).json({ message: "Member is already active." });
-  } else {
-    res.status(404);
-    throw new Error("Member not found");
-  }
-});
-
-const authMember = asyncHandler(async (req, res) => {
+export const authMember = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
   const member = await Member.findOne({ email: email.toLowerCase() });
   if (member && (await member.matchPassword(password))) {
-    const token = generateToken(member._id);
-    res.json({
-      ...member.toObject(),
-      token: token,
-    });
+    res.json({ ...member.toObject(), token: generateToken(member._id) });
   } else {
     res.status(401);
-    throw new Error("Invalid email or password");
+    throw new Error("Invalid email or password.");
   }
 });
 
-const getMemberProfile = asyncHandler(async (req, res) => {
+export const getMemberProfile = asyncHandler(async (req, res) => {
   const member = await Member.findById(req.user._id).select("-password");
-  if (member) {
-    res.json(member);
-  } else {
+  if (member) res.json(member);
+  else {
     res.status(404);
-    throw new Error("Member not found");
+    throw new Error("Member not found.");
   }
 });
 
-const updateMemberProfile = asyncHandler(async (req, res) => {
+export const updateMemberProfile = asyncHandler(async (req, res) => {
   const member = await Member.findById(req.user._id);
-
   if (member) {
     let addressData, employmentData, nomineesData;
     try {
@@ -181,48 +145,33 @@ const updateMemberProfile = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error("Invalid format for nested data.");
     }
-
     member.fullName = req.body.fullName || member.fullName;
     member.phone = req.body.phone || member.phone;
-    member.panNumber = req.body.panNumber || member.panNumber;
-
     if (addressData) member.address = addressData;
     if (employmentData) member.employment = employmentData;
-    if (nomineesData) {
-      const totalPercentage = nomineesData.reduce(
-        (sum, n) => sum + Number(n.percentage || 0),
-        0
-      );
-      if (totalPercentage !== 100) {
-        res.status(400);
-        throw new Error("Total nominee percentage must be exactly 100%");
-      }
-      member.nominees = nomineesData;
-    }
-
-    if (req.body.password) {
-      member.password = req.body.password;
-    }
-
-    if (req.files?.profileImage) {
+    if (nomineesData) member.nominees = nomineesData;
+    if (req.body.password) member.password = req.body.password;
+    if (req.files?.profileImage)
       member.profileImageUrl = req.files.profileImage[0].path;
-    }
-    if (req.files?.panImage) {
-      member.panImageUrl = req.files.panImage[0].path;
-    }
-
-    const updatedMember = await member.save();
-    res.json(updatedMember);
+    if (req.files?.panImage) member.panImageUrl = req.files.panImage[0].path;
+    res.json(await member.save());
   } else {
     res.status(404);
     throw new Error("Member not found");
   }
 });
 
-// === YEH FUNCTION UPDATE KIYA GAYA HAI ===
-const addState = asyncHandler(async (req, res) => {
-  const { name, districts } = req.body;
+export const getMyCertificates = asyncHandler(async (req, res) => {
+  const certificates = await MemberCertificate.find({
+    member: req.user._id,
+  }).sort({ createdAt: -1 });
+  res.json(certificates);
+});
 
+// --- CONFIG AND ADMIN FUNCTIONS ---
+
+export const addState = asyncHandler(async (req, res) => {
+  const { name, districts } = req.body;
   if (
     !name ||
     !districts ||
@@ -234,9 +183,7 @@ const addState = asyncHandler(async (req, res) => {
       "State name and a non-empty array of districts are required."
     );
   }
-
   const config = await getConfig();
-
   const stateExists = config.states.find(
     (s) => s.name.toLowerCase() === name.toLowerCase()
   );
@@ -244,36 +191,26 @@ const addState = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("State already exists");
   }
-
-  // District names ko validate aur format karein
   const formattedDistricts = districts
-    .map((d) => ({ name: d.trim() })) // Har district naam se whitespace hatao
-    .filter((d) => d.name); // Khaali naam ko hata do
-
+    .map((d) => ({ name: d.trim() }))
+    .filter((d) => d.name);
   if (formattedDistricts.length === 0) {
     res.status(400);
     throw new Error("District names cannot be empty.");
   }
-
-  const newState = {
-    name,
-    districts: formattedDistricts,
-  };
-
-  config.states.push(newState);
+  config.states.push({ name, districts: formattedDistricts });
   await config.save();
-
   res
     .status(201)
     .json(config.states.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
-const getStates = asyncHandler(async (req, res) => {
+export const getStates = asyncHandler(async (req, res) => {
   const config = await getConfig();
   res.json(config.states.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
-const addDistrict = asyncHandler(async (req, res) => {
+export const addDistrict = asyncHandler(async (req, res) => {
   const { stateName, districtName } = req.body;
   const config = await getConfig();
   const state = config.states.find((s) => s.name === stateName);
@@ -295,7 +232,7 @@ const addDistrict = asyncHandler(async (req, res) => {
     .json(state.districts.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
-const getDistrictsByState = asyncHandler(async (req, res) => {
+export const getDistrictsByState = asyncHandler(async (req, res) => {
   const { stateName } = req.params;
   const config = await getConfig();
   const state = config.states.find((s) => s.name === stateName);
@@ -306,7 +243,7 @@ const getDistrictsByState = asyncHandler(async (req, res) => {
   res.json(state.districts.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
-const addVolunteer = asyncHandler(async (req, res) => {
+export const addVolunteer = asyncHandler(async (req, res) => {
   const { name, code } = req.body;
   const config = await getConfig();
   const codeExists = config.volunteers.find(
@@ -323,81 +260,45 @@ const addVolunteer = asyncHandler(async (req, res) => {
     .json(config.volunteers.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
-const getVolunteers = asyncHandler(async (req, res) => {
+export const getVolunteers = asyncHandler(async (req, res) => {
   const config = await getConfig();
   res.json(config.volunteers.sort((a, b) => a.name.localeCompare(b.name)));
 });
-const deleteState = asyncHandler(async (req, res) => {
+
+export const deleteState = asyncHandler(async (req, res) => {
   const { id: stateId } = req.params;
   const config = await getConfig();
-
-  const stateExists = config.states.some((s) => s._id.toString() === stateId);
-  if (!stateExists) {
-    res.status(404);
-    throw new Error("State not found");
-  }
-
   config.states.pull({ _id: stateId });
   await config.save();
-
   res.json({ message: "State deleted successfully" });
 });
 
-const deleteDistrict = asyncHandler(async (req, res) => {
+export const deleteDistrict = asyncHandler(async (req, res) => {
   const { stateId, districtId } = req.params;
   const config = await getConfig();
-
   const state = config.states.id(stateId);
-  if (!state) {
-    res.status(404);
-    throw new Error("State not found");
-  }
-
-  const districtExists = state.districts.some(
-    (d) => d._id.toString() === districtId
-  );
-  if (!districtExists) {
-    res.status(404);
-    throw new Error("District not found in this state");
-  }
-
-  state.districts.pull({ _id: districtId });
+  if (state) state.districts.pull({ _id: districtId });
   await config.save();
-
   res.json({ message: "District deleted successfully" });
 });
 
-const deleteVolunteer = asyncHandler(async (req, res) => {
+export const deleteVolunteer = asyncHandler(async (req, res) => {
   const { id: volunteerId } = req.params;
   const config = await getConfig();
-
-  const volunteerExists = config.volunteers.some(
-    (v) => v._id.toString() === volunteerId
-  );
-  if (!volunteerExists) {
-    res.status(404);
-    throw new Error("Volunteer not found");
-  }
-
   config.volunteers.pull({ _id: volunteerId });
   await config.save();
-
   res.json({ message: "Volunteer deleted successfully" });
 });
 
-const changeMemberStatusByAdmin = asyncHandler(async (req, res) => {
+export const changeMemberStatusByAdmin = asyncHandler(async (req, res) => {
   const { status, notes } = req.body;
-
   if (!["Active", "Blocked", "Inactive"].includes(status)) {
     res.status(400);
     throw new Error("Invalid status value.");
   }
-
   const member = await Member.findById(req.params.id);
-
   if (member) {
     member.membershipStatus = status;
-
     if (status === "Blocked") {
       member.adminNotes = notes || "No reason provided.";
       member.blockedAt = new Date();
@@ -407,7 +308,6 @@ const changeMemberStatusByAdmin = asyncHandler(async (req, res) => {
       member.blockedAt = undefined;
       member.blockedBy = undefined;
     }
-
     await member.save();
     res.json({ message: `Member status has been updated to ${status}.` });
   } else {
@@ -416,10 +316,9 @@ const changeMemberStatusByAdmin = asyncHandler(async (req, res) => {
   }
 });
 
-const getBlockedUsers = asyncHandler(async (req, res) => {
+export const getBlockedUsers = asyncHandler(async (req, res) => {
   const pageSize = Number(req.query.limit) || 10;
   const page = Number(req.query.page) || 1;
-
   const keyword = req.query.keyword
     ? {
         $or: [
@@ -428,42 +327,12 @@ const getBlockedUsers = asyncHandler(async (req, res) => {
         ],
       }
     : {};
-
   const filter = { membershipStatus: "Blocked", ...keyword };
-
   const count = await Member.countDocuments(filter);
-
   const members = await Member.find(filter)
     .populate("blockedBy", "fullName email")
     .sort({ blockedAt: -1 })
     .limit(pageSize)
     .skip(pageSize * (page - 1));
-
   res.json({ members, page, pages: Math.ceil(count / pageSize), total: count });
 });
-const getMyCertificates = asyncHandler(async (req, res) => {
-  const certificates = await MemberCertificate.find({ member: req.user._id })
-    .select("-member -generatedBy")
-    .sort({ createdAt: -1 });
-
-  res.json(certificates);
-});
-export {
-  registerMember,
-  activateMember,
-  authMember,
-  getMemberProfile,
-  updateMemberProfile,
-  addState,
-  getStates,
-  addDistrict,
-  getDistrictsByState,
-  addVolunteer,
-  getVolunteers,
-  changeMemberStatusByAdmin,
-  getBlockedUsers,
-  getMyCertificates,
-  deleteState,
-  deleteDistrict,
-  deleteVolunteer,
-};

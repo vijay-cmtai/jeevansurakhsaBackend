@@ -1,13 +1,13 @@
+// server.js
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-
 dotenv.config();
 
 import { configureCloudinary } from "./config/cloudinary.js";
 configureCloudinary();
-
 import connectDB from "./config/db.js";
+
 import memberRoutes from "./routes/memberRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import membershipAdminRoutes from "./routes/membershipRoutes.js";
@@ -28,27 +28,14 @@ connectDB();
 
 const app = express();
 
-// ✅ Allow both local & deployed frontend
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://jeevansurakhsa-frontend.vercel.app", // your deployed frontend domain
-];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-  credentials: true,
-};
-
-// ✅ Apply CORS before any routes
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+// ✅ Allow all during testing (can restrict later)
+app.use(cors({
+  origin: [
+    "http://localhost:3000",
+    "https://jeevansurakhsa-frontend.vercel.app"
+  ],
+  credentials: true
+}));
 
 app.use(express.json());
 
@@ -73,15 +60,14 @@ app.use("/api/member-donations", memberDonationRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/users", userRoutes);
 
-// ✅ Error handler with logging
+// ✅ Global error handler — always sends CORS headers
 app.use((err, req, res, next) => {
   console.error("🔥 ERROR:", err);
 
-  if (err.message === "Not allowed by CORS") {
-    return res.status(403).json({
-      message: "CORS Error: This origin is not allowed to access this resource.",
-    });
-  }
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Credentials", "true");
 
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
   res.status(statusCode).json({
@@ -91,7 +77,6 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5001;
-
 app.listen(PORT, () =>
   console.log(`✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`)
 );

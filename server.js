@@ -2,12 +2,13 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+
 dotenv.config();
 
 import { configureCloudinary } from "./config/cloudinary.js";
 configureCloudinary();
-import connectDB from "./config/db.js";
 
+import connectDB from "./config/db.js";
 import memberRoutes from "./routes/memberRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import membershipAdminRoutes from "./routes/membershipRoutes.js";
@@ -28,22 +29,69 @@ connectDB();
 
 const app = express();
 
-// ✅ Allow all during testing (can restrict later)
-app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://jeevansurakhsa-frontend.vercel.app"
+// ✅ Enhanced CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "http://localhost:3001", 
+      "https://jeevansurakhsa-frontend.vercel.app"
+    ];
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin'
   ],
-  credentials: true
-}));
+  optionsSuccessStatus: 200 // For legacy browser support
+};
 
-app.use(express.json());
+app.use(cors(corsOptions));
 
-app.get("/", (req, res) => {
-  res.send("API is running successfully...");
+// ✅ Handle preflight OPTIONS requests explicitly
+app.options('*', cors(corsOptions));
+
+// ✅ Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ✅ Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
 });
 
-// ✅ Routes
+// ✅ Root route
+app.get("/", (req, res) => {
+  res.json({ 
+    message: "JeevanSurakhsa API is running successfully...",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// ✅ Health check route
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    timestamp: new Date().toISOString() 
+  });
+});
+
+// ✅ API Routes
 app.use("/api/members", memberRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin", membershipAdminRoutes);
@@ -60,23 +108,64 @@ app.use("/api/member-donations", memberDonationRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/users", userRoutes);
 
-// ✅ Global error handler — always sends CORS headers
-app.use((err, req, res, next) => {
-  console.error("🔥 ERROR:", err);
-
-  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true");
-
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-  res.status(statusCode).json({
-    message: err.message,
-    stack: process.env.NODE_ENV === "production" ? "🥞" : err.stack,
+// ✅ 404 handler for undefined routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.originalUrl} not found`
   });
 });
 
+// ✅ Enhanced Global Error Handler with proper CORS
+app.use((err, req, res, next) => {
+  console.error("🔥 SERVER ERROR:", {
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+
+  // Ensure CORS headers are always sent, even on errors
+  const allowedOrigin = req.headers.origin && [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://jeevansurakhsa-frontend.vercel.app"
+  ].includes(req.headers.origin) ? req.headers.origin : "http://localhost:3000";
+
+  res.header("Access-Control-Allow-Origin", allowedOrigin);
+  res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  const statusCode = err.statusCode || res.statusCode === 200 ? 500 : res.statusCode;
+  
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+    ...(process.env.NODE_ENV === "development" && { 
+      stack: err.stack,
+      error: err 
+    })
+  });
+});
+
+// ✅ Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
+
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () =>
-  console.log(`✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`)
-);
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  console.log(`🌍 CORS enabled for: http://localhost:3000, https://jeevansurakhsa-frontend.vercel.app`);
+});
+
+export default app;

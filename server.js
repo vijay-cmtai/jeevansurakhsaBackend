@@ -1,14 +1,16 @@
 // server.js
+
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 
+// Configurations ko sabse pehle load karein
 dotenv.config();
 
 import { configureCloudinary } from "./config/cloudinary.js";
-configureCloudinary();
-
 import connectDB from "./config/db.js";
+
+// Routes ko import karein
 import memberRoutes from "./routes/memberRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import membershipAdminRoutes from "./routes/membershipRoutes.js";
@@ -25,23 +27,22 @@ import memberDonationRoutes from "./routes/memberDonationRoutes.js";
 import claimRoutes from "./routes/claimRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 
+// Database aur Cloudinary ko configure karein
+configureCloudinary();
 connectDB();
 
 const app = express();
 
-// ✅ Enhanced CORS configuration
+// ✅ CORS Configuration (Yeh setup bilkul sahi hai)
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = ["*",
+    const allowedOrigins = [
       "http://localhost:3000",
-      "http://localhost:3001", 
       "https://jeevansurakhsa-frontend.vercel.app"
     ];
     
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (like Postman) or from allowed origins
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -59,18 +60,19 @@ const corsOptions = {
   optionsSuccessStatus: 200 // For legacy browser support
 };
 
+// CORS middleware ko sabse pehle istemal karein
 app.use(cors(corsOptions));
 
-// ✅ Handle preflight OPTIONS requests explicitly
+// Pre-flight requests ke liye
 app.options('*', cors(corsOptions));
 
 // ✅ Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ✅ Request logging middleware
+// ✅ Request logging middleware (Debugging ke liye faydemand)
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
@@ -78,17 +80,13 @@ app.use((req, res, next) => {
 app.get("/", (req, res) => {
   res.json({ 
     message: "JeevanSurakhsa API is running successfully...",
-    timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
 });
 
 // ✅ Health check route
 app.get("/health", (req, res) => {
-  res.json({ 
-    status: "OK", 
-    timestamp: new Date().toISOString() 
-  });
+  res.status(200).json({ status: "OK" });
 });
 
 // ✅ API Routes
@@ -108,64 +106,37 @@ app.use("/api/member-donations", memberDonationRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/users", userRoutes);
 
-// ✅ 404 handler for undefined routes
-app.use('*', (req, res) => {
+// ✅ 404 Handler (Jab koi route match na ho)
+app.use((req, res, next) => {
   res.status(404).json({
     success: false,
-    message: `Route ${req.originalUrl} not found`
+    message: `Route Not Found: ${req.originalUrl}`
   });
 });
 
-// ✅ Enhanced Global Error Handler with proper CORS
+// ✅ Global Error Handler
 app.use((err, req, res, next) => {
-  console.error("🔥 SERVER ERROR:", {
-    message: err.message,
-    stack: err.stack,
-    url: req.url,
-    method: req.method,
-    timestamp: new Date().toISOString()
-  });
+  console.error("🔥 GLOBAL ERROR HANDLER CAUGHT:", err);
 
-  // Ensure CORS headers are always sent, even on errors
-  const allowedOrigin = req.headers.origin && [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "https://jeevansurakhsa-frontend.vercel.app"
-  ].includes(req.headers.origin) ? req.headers.origin : "http://localhost:3000";
-
-  res.header("Access-Control-Allow-Origin", allowedOrigin);
-  res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin");
-  res.header("Access-Control-Allow-Credentials", "true");
-
-  const statusCode = err.statusCode || res.statusCode === 200 ? 500 : res.statusCode;
+  const statusCode = err.statusCode || 500;
   
   res.status(statusCode).json({
     success: false,
-    message: err.message || 'Internal Server Error',
-    ...(process.env.NODE_ENV === "development" && { 
-      stack: err.stack,
-      error: err 
-    })
+    message: err.message || 'An unexpected internal server error occurred.',
+    // Development mode mein extra details bhej sakte hain
+    ...(process.env.NODE_ENV === "development" && { stack: err.stack })
   });
 });
 
-// ✅ Graceful shutdown handling
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
-
+// ❌ VERCEL DEPLOYMENT KE LIYE IS BLOCK KO HATA DIYA GAYA HAI
+/*
 const PORT = process.env.PORT || 5001;
-
 app.listen(PORT, () => {
   console.log(`✅ Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-  console.log(`🌍 CORS enabled for: http://localhost:3000, https://jeevansurakhsa-frontend.vercel.app`);
 });
+*/
 
+// ✅ VERCEL KE LIYE EXPRESS APP KO EXPORT KARNA ZAROORI HAI
+// Yahi line Vercel ko batati hai ki requests ko kaise handle karna hai.
 export default app;

@@ -1,7 +1,6 @@
 import asyncHandler from "express-async-handler";
 import Notice from "../../models/noticeModel.js";
 import Member from "../../models/memberModel.js";
-import { activateMember } from "../user/memberController.js";
 
 const sendSingleNotice = asyncHandler(async (req, res) => {
   const { title, subject, content } = req.body;

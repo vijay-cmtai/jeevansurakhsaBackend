@@ -1,10 +1,11 @@
 import express from "express";
-import { protect } from "../middleware/authMiddleware.js";
+import { protect, admin } from "../middleware/authMiddleware.js";
 import {
   createMemberDonation,
   getMyDonationHistory,
   handlePaymentWebhook,
   verifyPaymentStatus,
+  getAllMemberDonations,
 } from "../controllers/user/memberDonationController.js";
 
 const router = express.Router();
@@ -16,5 +17,7 @@ router.post("/verify", protect, verifyPaymentStatus);
 
 // Webhook route (Public - no auth needed)
 router.post("/webhook", handlePaymentWebhook);
+
+router.get("/admin/all", protect, admin, getAllMemberDonations);
 
 export default router;

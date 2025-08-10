@@ -257,3 +257,19 @@ export const getMyDonationHistory = asyncHandler(async (req, res) => {
   );
   res.status(200).json(donations);
 });
+
+export const getAllMemberDonations = asyncHandler(async (req, res) => {
+  console.log(
+    `[Admin] Admin user ${req.user._id} is fetching all member donations.`
+  );
+
+  const donations = await MemberDonation.find({})
+    .sort({ createdAt: -1 })
+    // We MUST populate the 'member' field to get the user's name, email, etc.
+    .populate("member", "fullName email mobile memberId");
+
+  console.log(
+    `[Admin] Found ${donations.length} total member donation records.`
+  );
+  res.status(200).json(donations);
+});

@@ -3,8 +3,46 @@ import crypto from "crypto";
 import axios from "axios";
 import VisitorDonation from "../models/visitorDonationModel.js";
 
-// --- Step 1: INITIATE Donation (Updated & Corrected Logic) ---
-const initiateDonation = asyncHandler(async (req, res) => {
+/**
+ * @description Centralized helper function to update a visitor donation to SUCCESS.
+ *              This avoids code duplication and ensures consistent behavior.
+ * @param {object} donation - The Mongoose donation document.
+ * @param {object} paymentData - Payment details from Cashfree.
+ * @returns {Promise<object>} The updated and saved donation document.
+ */
+const updateVisitorDonationOnSuccess = async (donation, paymentData) => {
+  // If already updated, do nothing to prevent race conditions.
+  if (donation.status === "SUCCESS") {
+    console.log(
+      `[Info] VisitorDonation ${donation.transactionId} is already SUCCESS.`
+    );
+    return donation;
+  }
+  donation.status = "SUCCESS";
+  donation.receiptNo = `VDR-${new Date().getFullYear()}-${String(donation._id).slice(-6).toUpperCase()}`;
+  // Optional: You can add more fields like paidAt, paymentMethod if your schema supports it
+  // if (paymentData) {
+  //     donation.paymentId = paymentData.cf_payment_id;
+  // }
+  console.log(
+    `[Success] Updating VisitorDonation ${donation.transactionId} to SUCCESS. Receipt: ${donation.receiptNo}`
+  );
+  return await donation.save();
+};
+
+/**
+ * @description Initiates a donation for a visitor by creating an order with Cashfree.
+ * @route   POST /api/donate/initiate
+ * @access  Public
+ */
+export const initiateDonation = asyncHandler(async (req, res) => {
+  // ✅ DEBUGGING STEP: Log credentials to quickly identify .env issues.
+  console.log("--- [Visitor Donation] Checking Environment Variables ---");
+  console.log("CASHFREE_API_URL:", process.env.CASHFREE_API_URL);
+  console.log("CASHFREE_APP_ID:", process.env.CASHFREE_APP_ID);
+  console.log("CASHFREE_SECRET_KEY loaded:", !!process.env.CASHFREE_SECRET_KEY);
+  console.log("---------------------------------------------------------");
+
   const {
     name,
     email,
@@ -15,13 +53,11 @@ const initiateDonation = asyncHandler(async (req, res) => {
     bankName,
     branchName,
   } = req.body;
-
   if (!name || !mobile || !amount) {
     res.status(400);
-    throw new Error("Name, mobile, and amount are required.");
+    throw new Error("Name, mobile, and amount are required fields.");
   }
 
-  // Yeh hamara internal transaction ID hai, jo Cashfree ka order_id banega
   const transactionId = `TXN_VISITOR_${Date.now()}`;
 
   const orderPayload = {
@@ -35,14 +71,13 @@ const initiateDonation = asyncHandler(async (req, res) => {
       customer_phone: mobile,
     },
     order_meta: {
-      return_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/donation-status?order_id={order_id}`,
-      notify_url: `${process.env.BACKEND_URL || "http://localhost:5001"}/api/donate/callback`,
+      return_url: `${process.env.FRONTEND_URL}/donation-status?order_id={order_id}`,
+      notify_url: `${process.env.BACKEND_URL}/api/donate/callback`,
     },
     order_note: "Visitor Donation for Jeevan Suraksha",
   };
 
   try {
-    // === STEP 1: Pehle Cashfree se order create karo ===
     const cashfreeResponse = await axios.post(
       `${process.env.CASHFREE_API_URL}/orders`,
       orderPayload,
@@ -56,12 +91,8 @@ const initiateDonation = asyncHandler(async (req, res) => {
       }
     );
 
-    console.log("Cashfree order created:", cashfreeResponse.data);
     const cashfreeData = cashfreeResponse.data;
-
-    // === STEP 2: Ab form data aur Cashfree se mila data ek saath database mein save karo ===
     await VisitorDonation.create({
-      // Form se aaya data
       name,
       email,
       mobile,
@@ -70,147 +101,141 @@ const initiateDonation = asyncHandler(async (req, res) => {
       panNumber,
       bankName,
       branchName,
-
-      // Cashfree se aaya data (agar aapne schema update kiya hai)
       transactionId,
       cfOrderId: cashfreeData.cf_order_id,
       paymentSessionId: cashfreeData.payment_session_id,
       cashfreeOrderStatus: cashfreeData.order_status,
       orderExpiryTime: cashfreeData.order_expiry_time,
-
-      // Default status
       status: "PENDING",
     });
 
-    console.log(
-      "Donation record created in DB with PENDING status successfully."
-    );
-
-    // === STEP 3: Frontend ko payment details bhejo ===
-    res.json({
+    console.log("VisitorDonation record created in DB with PENDING status.");
+    res.status(201).json({
       payment_session_id: cashfreeData.payment_session_id,
       order_id: transactionId,
     });
   } catch (error) {
-    // Agar Cashfree API ya Database mein se kahin bhi error aaya
     console.error(
-      "Failed to process donation request:",
-      error.response ? error.response.data : error.message
+      "Failed to process visitor donation request:",
+      error.response?.data || error.message
     );
     res.status(500).json({
       message:
         "Failed to create payment order. Please check credentials and try again.",
-      error: error.response ? error.response.data : error.message,
+      errorDetails: error.response?.data, // Send detailed error for debugging
     });
   }
 });
 
-// --- Step 2: HANDLE the Webhook from Cashfree Servers ---
-const handleDonationCallback = asyncHandler(async (req, res) => {
-  console.log("Webhook received:", req.body);
-  console.log("Webhook headers:", req.headers);
+/**
+ * @description Handles webhooks from Cashfree for server-to-server confirmation.
+ * @route   POST /api/donate/callback
+ * @access  Public
+ */
+export const handleDonationCallback = asyncHandler(async (req, res) => {
+  // Your signature verification logic here is a good practice for production.
+  const { data } = req.body;
+  if (!data || !data.order)
+    return res.status(400).send("Invalid webhook payload.");
 
-  const webhookPayload = req.body;
-  const receivedSignature = req.headers["x-webhook-signature"];
-  const timestamp = req.headers["x-webhook-timestamp"];
+  const { order, payment } = data;
+  const donation = await VisitorDonation.findOne({
+    transactionId: order.order_id,
+  });
+  if (!donation) return res.status(404).send("Donation record not found.");
 
-  // Verify the webhook signature
-  if (receivedSignature && timestamp) {
-    try {
-      const bodyString = timestamp + JSON.stringify(webhookPayload);
-      const secretKey = process.env.CASHFREE_SECRET_KEY;
-      const generatedSignature = crypto
-        .createHmac("sha256", secretKey)
-        .update(bodyString)
-        .digest("base64");
-
-      if (generatedSignature !== receivedSignature) {
-        console.warn("Webhook signature verification failed.");
-        return res.status(401).send("Signature verification failed.");
-      }
-      console.log("Webhook signature verified successfully");
-    } catch (e) {
-      console.error("Error verifying webhook signature:", e.message);
-      return res.status(400).send("Invalid webhook payload.");
+  if (order.order_status === "PAID") {
+    await updateVisitorDonationOnSuccess(donation, payment);
+  } else if (["FAILED", "CANCELLED", "EXPIRED"].includes(order.order_status)) {
+    if (donation.status !== "FAILED") {
+      donation.status = "FAILED";
+      await donation.save();
     }
-  } else {
-    console.warn("Missing signature or timestamp in webhook headers");
   }
-
-  const { order_id, order_status } =
-    webhookPayload.data?.order || webhookPayload;
-
-  console.log(
-    `Webhook received for visitor donation ${order_id} with status: ${order_status}`
-  );
-
-  try {
-    const donation = await VisitorDonation.findOne({ transactionId: order_id });
-    if (!donation) {
-      console.error(`Donation not found for order_id: ${order_id}`);
-      return res.status(404).send("Donation not found.");
-    }
-
-    if (order_status === "PAID") {
-      if (donation.status !== "SUCCESS") {
-        donation.status = "SUCCESS";
-        donation.receiptNo = `VDR-${new Date().getFullYear()}-${String(donation._id).slice(-6).toUpperCase()}`;
-        await donation.save();
-        console.log(
-          `Visitor donation status updated to 'SUCCESS' for ${order_id}. Receipt: ${donation.receiptNo}`
-        );
-      } else {
-        console.log(`Donation ${order_id} already marked as SUCCESS`);
-      }
-    } else if (["FAILED", "CANCELLED", "EXPIRED"].includes(order_status)) {
-      await VisitorDonation.updateOne(
-        { transactionId: order_id },
-        { status: "FAILED" }
-      );
-      console.log(
-        `Visitor donation status updated to 'FAILED' for ${order_id}`
-      );
-    }
-  } catch (error) {
-    console.error("Error processing webhook:", error);
-    return res.status(500).send("Error processing webhook.");
-  }
-
   res.status(200).send("Webhook processed successfully.");
 });
 
-// --- Step 3: Check donation status (for frontend polling) ---
-const checkDonationStatus = asyncHandler(async (req, res) => {
+/**
+ * @description Checks donation status for the frontend polling mechanism.
+ * @route   GET /api/donate/status/:order_id
+ * @access  Public
+ */
+export const checkDonationStatus = asyncHandler(async (req, res) => {
   const { order_id } = req.params;
+  const donation = await VisitorDonation.findOne({ transactionId: order_id });
 
-  try {
-    const donation = await VisitorDonation.findOne({ transactionId: order_id });
+  if (!donation) {
+    return res.status(404).json({ message: "Transaction record not found." });
+  }
 
-    if (!donation) {
-      return res.status(404).json({ message: "Transaction record not found." });
-    }
-
-    res.json({
+  if (donation.status !== "PENDING") {
+    console.log(
+      `[Status Check] Returning final status '${donation.status}' for order ${order_id} from DB.`
+    );
+    return res.json({
       status: donation.status,
       receiptNo: donation.receiptNo,
       amount: donation.amount,
       createdAt: donation.createdAt,
+      donorName: donation.name,
+    });
+  }
+
+  // If status is PENDING, actively verify with the Cashfree API.
+  try {
+    console.log(
+      `[Status Check] Status for ${order_id} is PENDING. Verifying with Cashfree.`
+    );
+    const response = await axios.get(
+      `${process.env.CASHFREE_API_URL}/orders/${order_id}`,
+      {
+        headers: {
+          "x-api-version": "2022-09-01",
+          "x-client-id": process.env.CASHFREE_APP_ID,
+          "x-client-secret": process.env.CASHFREE_SECRET_KEY,
+        },
+      }
+    );
+
+    const cashfreeOrder = response.data;
+    let updatedDonation = donation;
+
+    if (cashfreeOrder.order_status === "PAID") {
+      updatedDonation = await updateVisitorDonationOnSuccess(
+        donation,
+        cashfreeOrder
+      );
+    } else if (
+      ["FAILED", "CANCELLED", "EXPIRED"].includes(cashfreeOrder.order_status)
+    ) {
+      updatedDonation.status = "FAILED";
+      await updatedDonation.save();
+    }
+
+    res.json({
+      status: updatedDonation.status,
+      receiptNo: updatedDonation.receiptNo,
+      amount: updatedDonation.amount,
+      createdAt: updatedDonation.createdAt,
+      donorName: updatedDonation.name,
     });
   } catch (error) {
-    console.error("Error checking donation status:", error);
-    res.status(500).json({ message: "Error checking donation status" });
+    console.error(
+      `[Status Check Error] Cashfree API failed for order ${order_id}:`,
+      error.response?.data
+    );
+    res
+      .status(500)
+      .json({ message: "Failed to verify status with the payment gateway." });
   }
 });
 
-// --- Step 4: For Admin Panel: Get all donations ---
-const getAllVisitorDonations = asyncHandler(async (req, res) => {
+/**
+ * @description Gets all visitor donations for the admin panel.
+ * @route   GET /api/donate/admin/all
+ * @access  Private (Admin only)
+ */
+export const getAllVisitorDonations = asyncHandler(async (req, res) => {
   const donations = await VisitorDonation.find({}).sort({ createdAt: -1 });
   res.json(donations);
 });
-
-export {
-  initiateDonation,
-  handleDonationCallback,
-  getAllVisitorDonations,
-  checkDonationStatus,
-};

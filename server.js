@@ -32,7 +32,7 @@ const app = express();
 // ✅ Enhanced CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = [
+    const allowedOrigins = ["*",
       "http://localhost:3000",
       "http://localhost:3001", 
       "https://jeevansurakhsa-frontend.vercel.app"

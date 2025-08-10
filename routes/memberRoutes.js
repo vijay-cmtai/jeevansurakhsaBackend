@@ -2,7 +2,6 @@ import express from "express";
 const router = express.Router();
 import {
   registerMember,
-  activateMember,
   authMember,
   getMemberProfile,
   updateMemberProfile,
@@ -15,7 +14,6 @@ import {
   changeMemberStatusByAdmin,
   getBlockedUsers,
   getMyCertificates,
-  // Naye imports
   deleteState,
   deleteDistrict,
   deleteVolunteer,
@@ -30,7 +28,6 @@ router
   .route("/profile")
   .get(protect, getMemberProfile)
   .put(protect, uploadImages, updateMemberProfile);
-router.put("/:id/activate", protect, activateMember);
 router.route("/my-certificates").get(protect, getMyCertificates);
 
 // Public Config Routes
@@ -38,12 +35,10 @@ router.get("/config/states", getStates);
 router.get("/config/districts/:stateName", getDistrictsByState);
 router.get("/config/volunteers", getVolunteers);
 
-// Admin Config Routes (POST)
+// Admin Config Routes
 router.post("/config/states", protect, admin, addState);
 router.post("/config/districts", protect, admin, addDistrict);
 router.post("/config/volunteers", protect, admin, addVolunteer);
-
-// === NAYE DELETE ROUTES START ===
 router.delete("/config/states/:id", protect, admin, deleteState);
 router.delete(
   "/config/states/:stateId/districts/:districtId",
@@ -52,9 +47,8 @@ router.delete(
   deleteDistrict
 );
 router.delete("/config/volunteers/:id", protect, admin, deleteVolunteer);
-// === NAYE DELETE ROUTES END ===
 
-// Admin Member Management Routes
+// Admin Member Management
 router.get("/admin/blocked", protect, admin, getBlockedUsers);
 router.put("/admin/status/:id", protect, admin, changeMemberStatusByAdmin);
 

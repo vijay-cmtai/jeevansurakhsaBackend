@@ -13,7 +13,7 @@ import memberRoutes from "./routes/memberRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import membershipAdminRoutes from "./routes/membershipRoutes.js";
 import allUsersRoutes from "./routes/allUsersRoutes.js";
-import receiptRoutes from "./routes/receiptRoutes.js";
+import receiptRoutes from "./routes/receiptRoutes1.js";
 import contributionPlanRoutes from "./routes/contributionPlanRoutes.js";
 import employmentConfigRoutes from "./routes/employmentConfigRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";

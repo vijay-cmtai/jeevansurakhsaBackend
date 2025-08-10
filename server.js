@@ -1,16 +1,14 @@
-// server.js
-
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 
-// Configurations ko sabse pehle load karein
+// Load configurations first
 dotenv.config();
 
 import { configureCloudinary } from "./config/cloudinary.js";
 import connectDB from "./config/db.js";
 
-// Routes ko import karein
+// Import routes
 import memberRoutes from "./routes/memberRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import membershipAdminRoutes from "./routes/membershipRoutes.js";
@@ -27,25 +25,27 @@ import memberDonationRoutes from "./routes/memberDonationRoutes.js";
 import claimRoutes from "./routes/claimRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 
-// Database aur Cloudinary ko configure karein
+// Configure database and Cloudinary
 configureCloudinary();
 connectDB();
 
 const app = express();
 
-// ✅ CORS Configuration (Yeh setup bilkul sahi hai)
+// CORS Configuration
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://jeevansurakhsa-frontend.vercel.app"
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      "http://localhost:3000",
-      "https://jeevansurakhsa-frontend.vercel.app"
-    ];
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
     
-    // Allow requests with no origin (like Postman) or from allowed origins
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`Origin '${origin}' not allowed by CORS`));
     }
   },
   credentials: true,
@@ -55,41 +55,62 @@ const corsOptions = {
     'Authorization',
     'X-Requested-With',
     'Accept',
-    'Origin'
+    'Origin',
+    'x-auth-token'
   ],
-  optionsSuccessStatus: 200 // For legacy browser support
+  optionsSuccessStatus: 200
 };
 
-// CORS middleware ko sabse pehle istemal karein
-app.use(cors(corsOptions));
-
-// Pre-flight requests ke liye
+// Special handling for OPTIONS requests
 app.options('*', cors(corsOptions));
 
-// ✅ Body parsing middleware
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Manually set CORS headers for all responses
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-auth-token'
+  );
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
+
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ✅ Request logging middleware (Debugging ke liye faydemand)
+// Request logging middleware
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
-// ✅ Root route
+// Root route
 app.get("/", (req, res) => {
   res.json({ 
     message: "JeevanSurakhsa API is running successfully...",
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
   });
 });
 
-// ✅ Health check route
+// Health check route
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "OK" });
+  res.status(200).json({ 
+    status: "OK",
+    database: "Connected", // You might want to add actual DB health check
+    timestamp: new Date().toISOString()
+  });
 });
 
-// ✅ API Routes
+// API Routes
 app.use("/api/members", memberRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin", membershipAdminRoutes);
@@ -106,37 +127,37 @@ app.use("/api/member-donations", memberDonationRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/users", userRoutes);
 
-// ✅ 404 Handler (Jab koi route match na ho)
-app.use((req, res, next) => {
+// 404 Handler
+app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route Not Found: ${req.originalUrl}`
+    message: `Route Not Found: ${req.originalUrl}`,
+    timestamp: new Date().toISOString()
   });
 });
 
-// ✅ Global Error Handler
+// Global Error Handler
 app.use((err, req, res, next) => {
-  console.error("🔥 GLOBAL ERROR HANDLER CAUGHT:", err);
+  console.error("🔥 GLOBAL ERROR HANDLER:", {
+    error: err.message,
+    stack: err.stack,
+    url: req.originalUrl,
+    timestamp: new Date().toISOString()
+  });
 
   const statusCode = err.statusCode || 500;
-  
-  res.status(statusCode).json({
+  const response = {
     success: false,
-    message: err.message || 'An unexpected internal server error occurred.',
-    // Development mode mein extra details bhej sakte hain
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack })
-  });
+    message: err.message || 'An unexpected error occurred',
+    timestamp: new Date().toISOString()
+  };
+
+  if (process.env.NODE_ENV === "development") {
+    response.stack = err.stack;
+  }
+
+  res.status(statusCode).json(response);
 });
 
-
-// ❌ VERCEL DEPLOYMENT KE LIYE IS BLOCK KO HATA DIYA GAYA HAI
-/*
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`✅ Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
-*/
-
-// ✅ VERCEL KE LIYE EXPRESS APP KO EXPORT KARNA ZAROORI HAI
-// Yahi line Vercel ko batati hai ki requests ko kaise handle karna hai.
+// Export for Vercel
 export default app;

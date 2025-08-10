@@ -29,8 +29,7 @@ connectDB();
 const app = express();
 
 const allowedOrigins = [
-  'http://localhost:3000',
-  'https://jeevansurakhsa.vercel.app' // Add your production frontend URL here
+  'http://localhost:3000'
 ];
 
 const corsOptions = {

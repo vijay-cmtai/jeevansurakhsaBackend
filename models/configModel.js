@@ -1,4 +1,4 @@
-// models/configModel.js
+// File: models/configModel.js
 import mongoose from "mongoose";
 
 const districtSchema = mongoose.Schema({
@@ -13,11 +13,12 @@ const stateSchema = mongoose.Schema({
 const volunteerSchema = mongoose.Schema({
   name: { type: String, required: true },
   code: { type: String, required: true, unique: true, uppercase: true },
+  phone: { type: String, required: true },
+  state: { type: String, required: true },
+  district: { type: String, required: true },
 });
-
 const configSchema = mongoose.Schema(
   {
-    // Using a singleton pattern - there will only be one document
     singleton: {
       type: String,
       default: "main_config",

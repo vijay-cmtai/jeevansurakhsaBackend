@@ -85,13 +85,11 @@ export const registerMember = asyncHandler(async (req, res) => {
     if (isPayingNow) {
       try {
         const paymentDetails = await createCashfreeOrderForMember(member);
-        res
-          .status(201)
-          .json({
-            _id: member._id,
-            message: "Member registered. Proceeding to payment.",
-            paymentDetails,
-          });
+        res.status(201).json({
+          _id: member._id,
+          message: "Member registered. Proceeding to payment.",
+          paymentDetails,
+        });
       } catch (paymentError) {
         res.status(500);
         throw new Error(
@@ -99,13 +97,11 @@ export const registerMember = asyncHandler(async (req, res) => {
         );
       }
     } else {
-      res
-        .status(201)
-        .json({
-          _id: member._id,
-          message: "Registration successful! Please login to complete payment.",
-          paymentDetails: null,
-        });
+      res.status(201).json({
+        _id: member._id,
+        message: "Registration successful! Please login to complete payment.",
+        paymentDetails: null,
+      });
     }
   } else {
     res.status(400);
@@ -183,6 +179,7 @@ export const addState = asyncHandler(async (req, res) => {
       "State name and a non-empty array of districts are required."
     );
   }
+
   const config = await getConfig();
   const stateExists = config.states.find(
     (s) => s.name.toLowerCase() === name.toLowerCase()
@@ -191,6 +188,7 @@ export const addState = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("State already exists");
   }
+
   const formattedDistricts = districts
     .map((d) => ({ name: d.trim() }))
     .filter((d) => d.name);
@@ -198,38 +196,41 @@ export const addState = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("District names cannot be empty.");
   }
-  config.states.push({ name, districts: formattedDistricts });
-  await config.save();
+
+  // SOLUTION: Seedha database ko update karein, poore document ko save na karein
+  await Config.updateOne(
+    { singleton: "main_config" },
+    { $push: { states: { name, districts: formattedDistricts } } }
+  );
+
+  const updatedConfig = await getConfig();
   res
     .status(201)
-    .json(config.states.sort((a, b) => a.name.localeCompare(b.name)));
+    .json(updatedConfig.states.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
 export const getStates = asyncHandler(async (req, res) => {
   const config = await getConfig();
   res.json(config.states.sort((a, b) => a.name.localeCompare(b.name)));
 });
-
 export const addDistrict = asyncHandler(async (req, res) => {
   const { stateName, districtName } = req.body;
-  const config = await getConfig();
-  const state = config.states.find((s) => s.name === stateName);
-  if (!state) {
+
+  const result = await Config.updateOne(
+    { "states.name": stateName },
+    { $push: { "states.$.districts": { name: districtName } } }
+  );
+
+  if (result.matchedCount === 0) {
     res.status(404);
     throw new Error("State not found");
   }
-  const districtExists = state.districts.find(
-    (d) => d.name.toLowerCase() === districtName.toLowerCase()
-  );
-  if (districtExists) {
-    res.status(400);
-    throw new Error("District already exists in this state");
-  }
-  state.districts.push({ name: districtName });
-  await config.save();
+
+  const updatedConfig = await getConfig();
+  const updatedState = updatedConfig.states.find((s) => s.name === stateName);
   res
     .status(201)
-    .json(state.districts.sort((a, b) => a.name.localeCompare(b.name)));
+    .json(updatedState.districts.sort((a, b) => a.name.localeCompare(b.name)));
 });
 
 export const getDistrictsByState = asyncHandler(async (req, res) => {
@@ -244,22 +245,40 @@ export const getDistrictsByState = asyncHandler(async (req, res) => {
 });
 
 export const addVolunteer = asyncHandler(async (req, res) => {
-  const { name, code } = req.body;
+  const { name, code, phone, state, district } = req.body;
+  if (!name || !code || !phone || !state || !district) {
+    res.status(400);
+    throw new Error(
+      "Please provide all fields: name, code, phone, state, and district."
+    );
+  }
+
   const config = await getConfig();
   const codeExists = config.volunteers.find(
     (v) => v.code.toUpperCase() === code.toUpperCase()
   );
   if (codeExists) {
     res.status(400);
-    throw new Error("Volunteer code already exists");
+    throw new Error("Volunteer with this code already exists");
   }
-  config.volunteers.push({ name, code: code.toUpperCase() });
-  await config.save();
+
+  // SOLUTION: Seedha database ko update karein
+  await Config.updateOne(
+    { singleton: "main_config" },
+    {
+      $push: {
+        volunteers: { name, code: code.toUpperCase(), phone, state, district },
+      },
+    }
+  );
+
+  const updatedConfig = await getConfig();
   res
     .status(201)
-    .json(config.volunteers.sort((a, b) => a.name.localeCompare(b.name)));
+    .json(
+      updatedConfig.volunteers.sort((a, b) => a.name.localeCompare(b.name))
+    );
 });
-
 export const getVolunteers = asyncHandler(async (req, res) => {
   const config = await getConfig();
   res.json(config.volunteers.sort((a, b) => a.name.localeCompare(b.name)));
@@ -267,26 +286,28 @@ export const getVolunteers = asyncHandler(async (req, res) => {
 
 export const deleteState = asyncHandler(async (req, res) => {
   const { id: stateId } = req.params;
-  const config = await getConfig();
-  config.states.pull({ _id: stateId });
-  await config.save();
+  await Config.updateOne(
+    { singleton: "main_config" },
+    { $pull: { states: { _id: stateId } } }
+  );
   res.json({ message: "State deleted successfully" });
 });
 
 export const deleteDistrict = asyncHandler(async (req, res) => {
   const { stateId, districtId } = req.params;
-  const config = await getConfig();
-  const state = config.states.id(stateId);
-  if (state) state.districts.pull({ _id: districtId });
-  await config.save();
+  await Config.updateOne(
+    { "states._id": stateId },
+    { $pull: { "states.$.districts": { _id: districtId } } }
+  );
   res.json({ message: "District deleted successfully" });
 });
 
 export const deleteVolunteer = asyncHandler(async (req, res) => {
   const { id: volunteerId } = req.params;
-  const config = await getConfig();
-  config.volunteers.pull({ _id: volunteerId });
-  await config.save();
+  await Config.updateOne(
+    { singleton: "main_config" },
+    { $pull: { volunteers: { _id: volunteerId } } }
+  );
   res.json({ message: "Volunteer deleted successfully" });
 });
 

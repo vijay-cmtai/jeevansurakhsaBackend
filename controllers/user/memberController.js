@@ -110,13 +110,22 @@ export const registerMember = asyncHandler(async (req, res) => {
 });
 
 export const authMember = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  const member = await Member.findOne({ email: email.toLowerCase() });
+  const { identifier, password } = req.body;
+
+  if (!identifier || !password) {
+    res.status(400);
+    throw new Error("Please provide identifier and password.");
+  }
+
+  const member = await Member.findOne({
+    $or: [{ email: identifier.toLowerCase() }, { phone: identifier }],
+  });
+
   if (member && (await member.matchPassword(password))) {
     res.json({ ...member.toObject(), token: generateToken(member._id) });
   } else {
     res.status(401);
-    throw new Error("Invalid email or password.");
+    throw new Error("Invalid credentials.");
   }
 });
 

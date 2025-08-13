@@ -84,17 +84,14 @@ const getBlockedUsers = asyncHandler(async (req, res) => {
   const filter = { membershipStatus: "Blocked", ...keyword };
   const count = await Member.countDocuments(filter);
 
-  // --- .populate() has been REMOVED because there is no Admin model ---
   const membersFromDB = await Member.find(filter)
     .sort({ blockedAt: -1 })
     .limit(pageSize)
     .skip(pageSize * (page - 1));
 
-  // Manually format the response to create a consistent object structure for the frontend
   const members = membersFromDB.map((m) => {
     const memberObject = m.toObject();
     if (m.blockedBy) {
-      // Create a 'blockedBy' object that the frontend expects
       memberObject.blockedBy = { fullName: m.blockedBy, email: m.blockedBy };
     }
     return memberObject;
@@ -157,19 +154,46 @@ const verifyMemberByAdmin = asyncHandler(async (req, res) => {
  */
 const updateMemberByAdmin = asyncHandler(async (req, res) => {
   const member = await Member.findById(req.params.id);
+
   if (member) {
-    const { fullName, panNumber, address, employment, nominees } = req.body;
-    member.fullName = fullName || member.fullName;
-    member.panNumber = panNumber || member.panNumber;
-    if (address)
-      member.address =
-        typeof address === "string" ? JSON.parse(address) : address;
-    if (employment)
-      member.employment =
-        typeof employment === "string" ? JSON.parse(employment) : employment;
-    if (nominees)
-      member.nominees =
-        typeof nominees === "string" ? JSON.parse(nominees) : nominees;
+    // Destructure all possible fields from the request body
+    const {
+      state,
+      district,
+      volunteerCode,
+      fullName,
+      panNumber,
+      address,
+      employment,
+      nominees,
+    } = req.body;
+
+    // Handle nested JSON data that comes as strings from FormData
+    let parsedAddress, parsedEmployment, parsedNominees;
+    try {
+      if (address) parsedAddress = JSON.parse(address);
+      if (employment) parsedEmployment = JSON.parse(employment);
+      if (nominees) parsedNominees = JSON.parse(nominees);
+    } catch (e) {
+      res.status(400);
+      throw new Error(
+        "Invalid format for JSON data (address, employment, or nominees)."
+      );
+    }
+
+    // Update all fields from the request
+    // Using `'key' in req.body` allows setting fields to empty strings
+    if ("state" in req.body) member.state = state;
+    if ("district" in req.body) member.district = district;
+    if ("volunteerCode" in req.body) member.volunteerCode = volunteerCode;
+    if ("fullName" in req.body) member.fullName = fullName;
+    if ("panNumber" in req.body) member.panNumber = panNumber;
+
+    if (parsedAddress) member.address = parsedAddress;
+    if (parsedEmployment) member.employment = parsedEmployment;
+    if (parsedNominees) member.nominees = parsedNominees;
+
+    // Handle file uploads
     if (req.files) {
       if (req.files.profileImage) {
         member.profileImageUrl = req.files.profileImage[0].path;
@@ -178,6 +202,7 @@ const updateMemberByAdmin = asyncHandler(async (req, res) => {
         member.panImageUrl = req.files.panImage[0].path;
       }
     }
+
     const updatedMember = await member.save();
     res.json(updatedMember);
   } else {
@@ -203,7 +228,6 @@ const changeMemberStatus = asyncHandler(async (req, res) => {
     if (status === "Blocked") {
       member.adminNotes = notes || "No reason provided.";
       member.blockedAt = new Date();
-      // --- Save the admin's identifier (string) directly from the token ---
       member.blockedBy = req.user.email || "Admin";
     } else {
       member.adminNotes = undefined;
@@ -234,7 +258,6 @@ const deleteMember = asyncHandler(async (req, res) => {
   }
 });
 
-// --- DOCUMENT GENERATION (PLACEHOLDERS) ---
 const generateAppointmentLetter = asyncHandler(async (req, res) => {
   const member = await Member.findById(req.params.id);
   if (!member || member.membershipStatus !== "Active") {

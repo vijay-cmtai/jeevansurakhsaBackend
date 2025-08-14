@@ -34,7 +34,7 @@ const app = express();
 // CORS Configuration
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://jeevansurakhsa-frontend.vercel.app"
+  "https://jeevansurakhsa-frontend.vercel.app","https://www.jeevansuraksha.in"
 ];
 
 const corsOptions = {

@@ -2,41 +2,43 @@ import asyncHandler from "express-async-handler";
 import Claim from "../models/claimModel.js";
 import Member from "../models/memberModel.js";
 
-// --- PUBLIC FACING CONTROLLERS ---
-
-// @desc    Create a new claim from the public website using EMAIL
-// @route   POST /api/claims
 const createPublicClaim = asyncHandler(async (req, res) => {
   const claimData = JSON.parse(req.body.claimData);
-  const { email, dateOfDeath, nomineeDetails } = claimData;
+  const { registrationNo, fullName, dateOfDeath, nomineeDetails } = claimData;
 
-  // Validate required fields
-  if (!email || !dateOfDeath || !nomineeDetails) {
+  if (!registrationNo || !fullName || !dateOfDeath || !nomineeDetails) {
     res.status(400);
     throw new Error(
-      "Missing required claim information (email, date of death, nominee details)."
+      "Missing required fields (Registration No, Full Name, Date of Death, Nominee Details)."
     );
   }
 
-  // Find member by email (case-insensitive)
-  const member = await Member.findOne({ email: email.toLowerCase() });
+  const member = await Member.findOne({
+    registrationNo: registrationNo.toUpperCase(),
+  });
 
-  // If member not found, throw a specific error
   if (!member) {
     res.status(404);
-    throw new Error(`Member with Email '${email}' not found.`);
+    throw new Error(
+      `Member with Registration No '${registrationNo}' not found.`
+    );
   }
 
-  // Create a new claim instance
+  if (member.fullName.toLowerCase() !== fullName.toLowerCase()) {
+    res.status(400);
+    throw new Error(
+      "The provided name does not match the registration number. Please check the details and try again."
+    );
+  }
+
   const newClaim = new Claim({
     deceasedMember: member._id,
     dateOfDeath,
     nomineeDetails,
     contributionPlan: member.employment?.contributionPlan || "Not Specified",
-    contributionAmountRequired: 0, // Admin will set this value later
+    contributionAmountRequired: 0,
   });
 
-  // Handle file uploads
   if (req.files?.deathCertificate) {
     newClaim.deathCertificateUrl = req.files.deathCertificate[0].path;
   }
@@ -45,15 +47,11 @@ const createPublicClaim = asyncHandler(async (req, res) => {
   }
 
   await newClaim.save();
-  res
-    .status(201)
-    .json({
-      message: "Claim reported successfully. We will review it shortly.",
-    });
+  res.status(201).json({
+    message: "Claim reported successfully. We will review it shortly.",
+  });
 });
 
-// @desc    Get only ACTIVE claims for the PUBLIC website (Hides sensitive data)
-// @route   GET /api/claims/active
 const getPublicActiveClaims = asyncHandler(async (req, res) => {
   const claims = await Claim.find({ claimStatus: "Active" })
     .populate("deceasedMember", "fullName profileImageUrl")
@@ -65,10 +63,6 @@ const getPublicActiveClaims = asyncHandler(async (req, res) => {
   res.json(claims);
 });
 
-// --- ADMIN FACING CONTROLLERS ---
-
-// @desc    Get ALL claims (all statuses) for the ADMIN panel
-// @route   GET /api/claims/admin
 const getAllClaimsForAdmin = asyncHandler(async (req, res) => {
   const claims = await Claim.find({})
     .populate("deceasedMember", "fullName profileImageUrl registrationNo")
@@ -76,7 +70,6 @@ const getAllClaimsForAdmin = asyncHandler(async (req, res) => {
   res.json(claims);
 });
 
-// @desc    Get a single claim by ID for admin
 const getClaimById = asyncHandler(async (req, res) => {
   const claim = await Claim.findById(req.params.id).populate(
     "deceasedMember",
@@ -90,7 +83,6 @@ const getClaimById = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Update a claim by admin
 const updateClaim = asyncHandler(async (req, res) => {
   const claim = await Claim.findById(req.params.id);
   if (!claim) {
@@ -129,7 +121,6 @@ const updateClaim = asyncHandler(async (req, res) => {
   res.json(populatedClaim);
 });
 
-// @desc    Delete a claim by admin
 const deleteClaim = asyncHandler(async (req, res) => {
   const claim = await Claim.findById(req.params.id);
   if (claim) {

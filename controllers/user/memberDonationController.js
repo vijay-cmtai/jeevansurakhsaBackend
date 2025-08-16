@@ -1,45 +1,37 @@
+// File: controllers/user/memberDonationController.js
+
 import asyncHandler from "express-async-handler";
 import axios from "axios";
 import Member from "../../models/memberModel.js";
 import MemberDonation from "../../models/memberDonationModel.js";
 
-/**
- * @description Helper function to update a donation's status to SUCCESS.
- *              This centralizes the logic and avoids code duplication.
- * @param {object} donation - The Mongoose donation document to update.
- * @param {object} paymentData - The payment details from Cashfree's response.
- * @returns {Promise<object>} - The updated and saved donation document.
- */
+// --- HELPER FUNCTION ---
 const updateDonationOnSuccess = async (donation, paymentData) => {
-  // If the donation is already marked as SUCCESS, do nothing. This prevents
-  // potential race conditions between the webhook and manual verification.
   if (donation.status === "SUCCESS") {
     console.log(
       `[Info] Donation ${donation.transactionId} is already SUCCESS. No update needed.`
     );
     return donation;
   }
-
   donation.status = "SUCCESS";
-  donation.receiptNo = `RCPT-${Date.now()}`; // Generate a unique receipt number
-  donation.paidAt = new Date(); // Record the exact time of successful payment
-
-  // Add specific payment details from Cashfree if they are available
+  donation.receiptNo = `RCPT-${Date.now()}`;
+  donation.paidAt = new Date();
   if (paymentData) {
     donation.paymentId = paymentData.cf_payment_id || paymentData.cf_order_id;
     donation.paymentMethod = paymentData.payment_group;
   }
-
   console.log(
     `[Success] Updating donation ${donation.transactionId} status to SUCCESS.`
   );
   return await donation.save();
 };
 
+// --- CONTROLLER FUNCTIONS ---
+
 /**
  * @description Creates a new donation order with Cashfree.
  * @route   POST /api/member-donations
- * @access  Private (Requires member login)
+ * @access  Private
  */
 export const createMemberDonation = asyncHandler(async (req, res) => {
   const { amount, panNumber } = req.body;
@@ -56,13 +48,8 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
     throw new Error("Member profile not found.");
   }
 
-  // ✅ CRITICAL VALIDATION: Ensure the member has a phone number before proceeding.
   if (!member.phone || member.phone.trim() === "") {
-    console.error(
-      `[Validation Error] Member ${memberId} attempted donation without a phone number.`
-    );
-    res.status(400); // Send a "Bad Request" status
-    // This user-friendly error message will be shown on the frontend.
+    res.status(400);
     throw new Error(
       "Your phone number is missing. Please update your profile before making a donation."
     );
@@ -70,7 +57,6 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
 
   const orderId = `MEMBER_DONATE_${memberId}_${Date.now()}`;
 
-  // 1. Create a PENDING donation record in our database.
   await MemberDonation.create({
     member: memberId,
     amount,
@@ -79,7 +65,6 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
     status: "PENDING",
   });
 
-  // 2. Prepare the order payload for the Cashfree API.
   const orderPayload = {
     order_id: orderId,
     order_amount: amount,
@@ -88,7 +73,7 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
       customer_id: memberId.toString(),
       customer_name: member.fullName,
       customer_email: member.email,
-      customer_phone: member.phone, // We are now certain this is not undefined.
+      customer_phone: member.phone,
     },
     order_meta: {
       return_url: `${process.env.FRONTEND_URL}/payment-status?order_id={order_id}`,
@@ -98,7 +83,6 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
   };
 
   try {
-    // 3. Send the request to Cashfree.
     const response = await axios.post(
       `${process.env.CASHFREE_API_URL}/orders`,
       orderPayload,
@@ -111,11 +95,12 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
         },
       }
     );
-    // 4. Send the session ID back to the frontend to initiate checkout.
-    res.status(201).json({
-      payment_session_id: response.data.payment_session_id,
-      order_id: orderId,
-    });
+    res
+      .status(201)
+      .json({
+        payment_session_id: response.data.payment_session_id,
+        order_id: orderId,
+      });
   } catch (error) {
     console.error(
       "[Cashfree Error] Failed to create order:",
@@ -128,21 +113,14 @@ export const createMemberDonation = asyncHandler(async (req, res) => {
 });
 
 /**
- * @description Handles incoming webhooks from Cashfree for server-to-server updates.
+ * @description Handles incoming webhooks from Cashfree.
  * @route   POST /api/member-donations/webhook
  * @access  Public
  */
 export const handlePaymentWebhook = asyncHandler(async (req, res) => {
-  // It is highly recommended to verify the webhook signature in a production environment.
   const { data } = req.body;
-  console.log(
-    "[Webhook] Received webhook from Cashfree:",
-    JSON.stringify(data, null, 2)
-  );
-
-  if (!data || !data.order) {
+  if (!data || !data.order)
     return res.status(400).send("Invalid webhook payload.");
-  }
 
   const { order, payment } = data;
   const donation = await MemberDonation.findOne({
@@ -162,42 +140,32 @@ export const handlePaymentWebhook = asyncHandler(async (req, res) => {
     if (donation.status !== "FAILED") {
       donation.status = "FAILED";
       await donation.save();
-      console.log(`[Webhook] Updated donation ${order.order_id} to FAILED.`);
     }
   }
-  // Always respond with a 200 OK to Cashfree to acknowledge receipt.
   res.status(200).send("OK");
 });
 
 /**
- * @description Verifies the payment status from the frontend after user returns from the gateway.
+ * @description Verifies the payment status from the frontend.
  * @route   POST /api/member-donations/verify
- * @access  Private (Requires member login)
+ * @access  Private
  */
 export const verifyPaymentStatus = asyncHandler(async (req, res) => {
   const { order_id } = req.body;
   const memberId = req.user._id;
 
-  // 1. Find the donation record in our database.
   const donation = await MemberDonation.findOne({
     transactionId: order_id,
     member: memberId,
   });
-
-  if (!donation) {
+  if (!donation)
     return res.status(404).json({ message: "Donation record not found." });
-  }
 
-  // 2. If status is already final (e.g., updated by a fast webhook), return it immediately.
   if (donation.status !== "PENDING") {
     const finalDonation = await donation.populate("member", "fullName email");
-    console.log(
-      `[Verify] Returning final status '${donation.status}' for order ${order_id} from DB.`
-    );
     return res.json(finalDonation);
   }
 
-  // 3. If still pending, poll Cashfree's API for the latest status.
   try {
     const response = await axios.get(
       `${process.env.CASHFREE_API_URL}/orders/${order_id}`,
@@ -221,7 +189,6 @@ export const verifyPaymentStatus = asyncHandler(async (req, res) => {
       updatedDonation = await donation.save();
     }
 
-    // Repopulate member info to send complete data back to the frontend.
     const finalDonation = await updatedDonation.populate(
       "member",
       "fullName email"
@@ -232,44 +199,62 @@ export const verifyPaymentStatus = asyncHandler(async (req, res) => {
       `[Verify Error] Cashfree API failed for order ${order_id}:`,
       error.response?.data
     );
-    // If the Cashfree API call fails, don't crash. Return the current status from our DB.
     const currentDonation = await donation.populate("member", "fullName email");
     res.json(currentDonation);
   }
 });
 
 /**
- * @description Fetches the entire donation history for the currently logged-in member.
+ * @description Fetches donation history for the logged-in member.
  * @route   GET /api/member-donations/my-history
- * @access  Private (Requires member login)
+ * @access  Private
  */
 export const getMyDonationHistory = asyncHandler(async (req, res) => {
-  console.log(
-    `[History] Fetching donation history for user ID: ${req.user._id}`
-  );
-
   const donations = await MemberDonation.find({ member: req.user._id })
     .sort({ createdAt: -1 })
     .populate("member", "fullName email");
-
-  console.log(
-    `[History] Found ${donations.length} records for user ${req.user._id}.`
-  );
   res.status(200).json(donations);
 });
 
+/**
+ * @description [ADMIN] Fetches all member donations.
+ * @route   GET /api/member-donations/admin/all
+ * @access  Private (Admin)
+ */
 export const getAllMemberDonations = asyncHandler(async (req, res) => {
-  console.log(
-    `[Admin] Admin user ${req.user._id} is fetching all member donations.`
-  );
-
   const donations = await MemberDonation.find({})
     .sort({ createdAt: -1 })
-    // We MUST populate the 'member' field to get the user's name, email, etc.
     .populate("member", "fullName email mobile memberId");
+  res.status(200).json(donations);
+});
+
+// ================================================================
+// ▼▼▼▼▼ NEW FUNCTION ADDED HERE ▼▼▼▼▼
+// ================================================================
+/**
+ * @description [ADMIN] Deletes a member donation record by its ID.
+ * @route   DELETE /api/member-donations/admin/:id
+ * @access  Private (Admin only)
+ */
+export const deleteMemberDonation = asyncHandler(async (req, res) => {
+  const donationId = req.params.id;
+
+  if (!donationId) {
+    res.status(400);
+    throw new Error("Donation ID is required.");
+  }
+
+  const donation = await MemberDonation.findById(donationId);
+
+  if (!donation) {
+    res.status(404);
+    throw new Error("Donation record not found.");
+  }
+
+  await MemberDonation.deleteOne({ _id: donationId });
 
   console.log(
-    `[Admin] Found ${donations.length} total member donation records.`
+    `[Admin] Admin user ${req.user._id} deleted donation record ${donationId}.`
   );
-  res.status(200).json(donations);
+  res.status(200).json({ message: "Donation record deleted successfully." });
 });

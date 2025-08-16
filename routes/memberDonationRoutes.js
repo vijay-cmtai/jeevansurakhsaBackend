@@ -1,3 +1,5 @@
+// File: routes/user/memberDonationRoutes.js
+
 import express from "express";
 import { protect, admin } from "../middleware/authMiddleware.js";
 import {
@@ -6,18 +8,22 @@ import {
   handlePaymentWebhook,
   verifyPaymentStatus,
   getAllMemberDonations,
+  deleteMemberDonation, // <-- Import the new controller
 } from "../controllers/user/memberDonationController.js";
 
 const router = express.Router();
 
-// Member donation routes (Protected)
-router.post("/", protect, createMemberDonation);
-router.get("/my-history", protect, getMyDonationHistory);
-router.post("/verify", protect, verifyPaymentStatus);
+// --- MEMBER ROUTES ---
+router.route("/").post(protect, createMemberDonation);
 
-// Webhook route (Public - no auth needed)
-router.post("/webhook", handlePaymentWebhook);
+router.route("/my-history").get(protect, getMyDonationHistory);
 
-router.get("/admin/all", protect, admin, getAllMemberDonations);
+router.route("/verify").post(protect, verifyPaymentStatus);
+
+router.route("/webhook").post(handlePaymentWebhook);
+
+router.route("/admin/all").get(protect, admin, getAllMemberDonations);
+
+router.route("/admin/:id").delete(protect, admin, deleteMemberDonation);
 
 export default router;

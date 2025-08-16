@@ -239,3 +239,14 @@ export const getAllVisitorDonations = asyncHandler(async (req, res) => {
   const donations = await VisitorDonation.find({}).sort({ createdAt: -1 });
   res.json(donations);
 });
+export const deleteVisitorDonation = asyncHandler(async (req, res) => {
+  const donation = await VisitorDonation.findById(req.params.id);
+
+  if (donation) {
+    await donation.deleteOne();
+    res.json({ message: "Visitor donation record deleted successfully." });
+  } else {
+    res.status(404);
+    throw new Error("Donation record not found.");
+  }
+});

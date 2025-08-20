@@ -27,7 +27,7 @@ const memberSchema = mongoose.Schema(
     volunteerCode: { type: String },
     panNumber: {
       type: String,
-      unique: true,
+      unique: false,
       sparse: true,
       uppercase: true,
       trim: true,

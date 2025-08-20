@@ -1,14 +1,8 @@
 import asyncHandler from "express-async-handler";
 import ContributionGroup from "../../models/contributionPlanModel.js";
 
-/**
- * @desc    Create a new contribution group or update an existing one.
- *          This function handles nested arrays of companies, departments, and plans.
- * @route   POST /api/contribution-plans
- * @access  Private/Admin
- */
+
 const createOrUpdateContributionGroup = asyncHandler(async (req, res) => {
-  // Data ab is naye structure mein aayega
   const { employmentType, companies } = req.body;
 
   // --- Validation ---
@@ -24,7 +18,7 @@ const createOrUpdateContributionGroup = asyncHandler(async (req, res) => {
     );
   }
 
-  // Group ko dhoondhein ya naya banayein
+  // Find the group by employmentType or create a new one
   let group = await ContributionGroup.findOne({ employmentType });
   if (!group) {
     group = new ContributionGroup({
@@ -34,7 +28,7 @@ const createOrUpdateContributionGroup = asyncHandler(async (req, res) => {
     });
   }
 
-  // Har company ke liye loop
+  // Loop through each company from the request
   for (const incomingCompany of companies) {
     if (
       !incomingCompany.companyName ||
@@ -43,22 +37,22 @@ const createOrUpdateContributionGroup = asyncHandler(async (req, res) => {
     )
       continue;
 
-    // Group ke andar company ko dhoondhein
+    // Find the company within the group
     let company = group.companies.find(
       (c) => c.companyName === incomingCompany.companyName.trim()
     );
 
-    // Agar company nahi milti to nayi banayein
+    // If company doesn't exist, create it
     if (!company) {
       const newCompanyData = {
         companyName: incomingCompany.companyName.trim(),
         departments: [],
       };
       group.companies.push(newCompanyData);
-      company = group.companies[group.companies.length - 1]; // Nayi company ka reference lein
+      company = group.companies[group.companies.length - 1];
     }
 
-    // Har department ke liye loop
+    // Loop through each department for the current company
     if (
       incomingCompany.departments &&
       Array.isArray(incomingCompany.departments)
@@ -71,36 +65,45 @@ const createOrUpdateContributionGroup = asyncHandler(async (req, res) => {
         )
           continue;
 
-        // Company ke andar department ko dhoondhein
+        // Find the department within the company
         let department = company.departments.find(
           (d) => d.departmentName === incomingDept.departmentName.trim()
         );
 
-        // Agar department nahi milta to naya banayein
+        // If department doesn't exist, create it
         if (!department) {
           const newDeptData = {
             departmentName: incomingDept.departmentName.trim(),
             plans: [],
           };
           company.departments.push(newDeptData);
-          department = company.departments[company.departments.length - 1]; // Naye department ka reference lein
+          department = company.departments[company.departments.length - 1];
         }
-
-        // Har plan ke liye loop
+        // The logic is updated to handle an array of objects: [{ planDetails: "..." }]
         if (incomingDept.plans && Array.isArray(incomingDept.plans)) {
-          for (const incomingPlan of incomingDept.plans) {
+          for (const incomingPlanObject of incomingDept.plans) {
+            // 1. Check if it's a valid object with a 'planDetails' string property
             if (
-              incomingPlan &&
-              typeof incomingPlan === "string" &&
-              incomingPlan.trim() !== "" &&
-              !department.plans.some(
-                (p) => p.planDetails === incomingPlan.trim()
-              )
+              incomingPlanObject &&
+              typeof incomingPlanObject === "object" &&
+              typeof incomingPlanObject.planDetails === "string" &&
+              incomingPlanObject.planDetails.trim() !== ""
             ) {
-              department.plans.push({ planDetails: incomingPlan.trim() });
+              const planDetailString = incomingPlanObject.planDetails.trim();
+
+              // 2. Check if this plan already exists to avoid duplicates
+              if (
+                !department.plans.some(
+                  (p) => p.planDetails === planDetailString
+                )
+              ) {
+                // 3. Push the entire object { planDetails: "..." }
+                department.plans.push({ planDetails: planDetailString });
+              }
             }
           }
         }
+       
       }
     }
   }
@@ -113,7 +116,6 @@ const getAllContributionGroups = asyncHandler(async (req, res) => {
   const groups = await ContributionGroup.find({}).sort({ createdAt: -1 });
   res.json(groups);
 });
-
 const getContributionGroupById = asyncHandler(async (req, res) => {
   const group = await ContributionGroup.findById(req.params.id);
   if (group) {
@@ -123,7 +125,6 @@ const getContributionGroupById = asyncHandler(async (req, res) => {
     throw new Error("Contribution Group not found");
   }
 });
-
 const deleteContributionGroup = asyncHandler(async (req, res) => {
   const group = await ContributionGroup.findById(req.params.id);
   if (group) {
@@ -136,7 +137,7 @@ const deleteContributionGroup = asyncHandler(async (req, res) => {
 });
 
 export {
-  createOrUpdateContributionGroup, // Hum ab is naye function ko export karenge
+  createOrUpdateContributionGroup,
   getAllContributionGroups,
   getContributionGroupById,
   deleteContributionGroup,
